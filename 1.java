@@ -1,4 +1,4 @@
-package com.example.flutterapp;
+package com.example.flutter_app_dynamic;
 
 import android.os.Bundle;
 
@@ -18,15 +18,9 @@ import io.flutter.plugins.GeneratedPluginRegistrant;
 
 public class MainActivity extends FlutterActivity {
 
-  private boolean isFlutterEngineIsDidRender;
-  private ArrayList<MethodCall> callFlutterQueue;
-
-  private String jsAppName = "";
-
   private V8 runtime;
 
-  //Flutter通道
-  private static final String FLUTTER_METHED_CHANNEL_NAME = "js_flutter.flutter_main_channel";
+  private static final String MAIN_FLUTTER_CHANNEL_NAME = "dynamic_main_flutter_channel";
   MethodChannel jsFlutterAppChannel;
 
   String data;
@@ -41,23 +35,20 @@ public class MainActivity extends FlutterActivity {
   public void setup() {
     setupChannel();
     setupEngine();
-//    mMXJSFlutterEngine = MXJSFlutterEngine.getInstance(this);
   }
 
   public void setupChannel() {
-    jsFlutterAppChannel = new MethodChannel(this.getFlutterView(), FLUTTER_METHED_CHANNEL_NAME);
+    jsFlutterAppChannel = new MethodChannel(this.getFlutterView(), MAIN_FLUTTER_CHANNEL_NAME);
     jsFlutterAppChannel.setMethodCallHandler(new MethodChannel.MethodCallHandler() {
       @Override
       public void onMethodCall(MethodCall methodCall, MethodChannel.Result result) {
-        if (methodCall.method.equals("callNativeRunJSApp")) {
-          String jsAppName = methodCall.<String>argument("jsAppName");
-          String pageName = methodCall.<String>argument("pageName");
-          callNativeRunJSApp(jsAppName, pageName);
-          result.success("success");
+        if (methodCall.method.equals("getJSON")) {
+          result.success(data);
         }
-        if (methodCall.method.equals("callNativeRunJSApp2")) {
-          V8Array arg = new V8Array(runtime).push(0);
-          int r = runtime.executeIntegerFunction("update", arg);
+        if (methodCall.method.equals("callJsUpdateJsonTree")) {
+          String event = methodCall.argument("event");
+          V8Array arg = new V8Array(runtime).push(event);
+          runtime.executeVoidFunction("updateEvent", arg);
           arg.close();
           result.success("success");
         }
@@ -66,39 +57,32 @@ public class MainActivity extends FlutterActivity {
   }
 
   public void setupEngine() {
-    runtime = V8.createV8Runtime(); // 创建 js 运行时
-    String script = FileUtils.getFromAssets(this, "main.js");
+    // 创建 js 运行时
+    runtime = V8.createV8Runtime();
+    String script = FileUtils.getFromAssets(this, "main.js") + " main();";
 
-    class MXNativeJSFlutterApp {
-
-      //js --> native
-      public void sendJSON(V8Object jsApp) {
-        System.out.println("[JSON]:" + jsApp.getString("data"));
-        data = jsApp.getString("data");
-      }
-    }
-
-    MXNativeJSFlutterApp MXNativeJSFlutterApp = new MXNativeJSFlutterApp();
+    NativeJSFlutterApp NativeJSFlutterApp = new NativeJSFlutterApp();
     V8Object v8Object = new V8Object(runtime);
-    runtime.add("MXNativeJSFlutterApp",v8Object);
-    v8Object.registerJavaMethod(MXNativeJSFlutterApp, "sendJSON",
-            "sendJSON", new Class<?>[]{V8Object.class});
-
-//    runtime.registerJavaMethod(callback, "sendJSON");
-
+    runtime.add("NativeJSFlutterApp", v8Object);
+    v8Object.registerJavaMethod(NativeJSFlutterApp, "sendJSON",
+            "sendJSON", new Class<?>[]{ V8Object.class });
+    v8Object.registerJavaMethod(NativeJSFlutterApp, "log",
+            "log", new Class<?>[]{ V8Object.class });
+    // System.out.println(script);
     V8Object result = runtime.executeObjectScript(script);
     result.close();
     v8Object.close();
-//    runtime.release(true);
+    // runtime.release(true);
   }
 
-  private void callNativeRunJSApp(String jsAppName, String pageName) {
-    jsFlutterAppChannel.invokeMethod("reloadApp", data);
-//    mMXJSFlutterEngine.runApp(jsAppName, pageName);
-//    V8Array arg = new V8Array(runtime).push(12).push(21);
-//    int r = runtime.executeIntegerFunction("add", arg); // 调用函数
-//    jsFlutterAppChannel.invokeMethod("reloadApp", r);
-//    arg.close();
-//    runtime.release(true);
+  private class NativeJSFlutterApp {
+    public void sendJSON(V8Object jsApp) {
+      System.out.println("[JSON]:" + jsApp.getString("data"));
+      data = jsApp.getString("data");
+    }
+    public void log(V8Object jsApp) {
+      System.out.println("[JS_LOG]:" + jsApp.getString("data"));
+    }
   }
+
 }
