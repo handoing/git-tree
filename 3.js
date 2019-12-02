@@ -1,5 +1,3 @@
-var data = 1;
-
 class Scaffold {
     constructor(options) {
         this.widgetName = "Scaffold";
@@ -22,34 +20,190 @@ class Text {
     }
 }
 
-function main(pageName) {
+class Column {
+    constructor(options) {
+        this.widgetName = "Column";
+        this.children = options.children;
+    }
+}
 
-    let app = new Scaffold({
-        appBar: new AppBar({
-            title: new Text("JSFlutter UI Demo")
-        }),
-        body: new Text(data)
-    });
+class GestureDetector {
+    constructor(options) {
+        this.widgetName = "GestureDetector";
+        this.child = options.child;
+        this.onTap = EventHandle.bindEvent(options.onTap);
+    }
+}
 
-    runApp(app);
+class StateWidget {
+  constructor() {
+    this.widgetName = "StateWidget";
+  }
 
+  setState(fun) {
+    fun.call(this);
+    buildOwner.updateWidget();
+  }
+}
+
+var EventHandle = (function() {
+  var id = 0;
+  var idMap = {};
+  var prefix = 'event_';
+
+  return {
+    bindEvent: function(fun) {
+      var eventKey = `${prefix}${++id}`;
+      idMap[eventKey] = fun;
+      return eventKey;
+    },
+    getEventMap: function() {
+      return idMap;
+    },
+    fireEvent: function(event) {
+      idMap[event] && idMap[event]();
+    }
+  }
+})()
+
+function updateEvent(event) {
+//  NativeJSFlutterApp.log({data: event});
+  EventHandle.fireEvent(event);
+}
+
+var buildOwner = (function() {
+  var currentWidget = {};
+
+  var toJSON = function() {
+    var jsonTree = JSON.stringify(currentWidget);
+    // js -> flutter 更新jsonTree
+    NativeJSFlutterApp.sendJSON({data: jsonTree});
+  }
+
+  return {
+    initWidget: function(widget) {
+      currentWidget = widget;
+      deepTraversal(currentWidget);
+      toJSON();
+    },
+    getCurrentWidget: function() {
+      return currentWidget;
+    },
+    updateWidget: function() {
+      deepTraversal(currentWidget);
+      toJSON();
+    }
+  }
+})()
+
+var supperTraversalKeys = [
+  'child',
+  'appBar',
+  'body',
+];
+
+function deepTraversal(node){
+    let nodes = [];
+
+    if (node.widgetName == 'StateWidget'){
+        node.child = node.build();
+    }
+
+    nodes.push[node];
+
+    if (node.children) {
+      let childrens = node.children;
+      for(let i = 0; i < childrens.length; i++) {
+        deepTraversal(childrens[i]);
+      }
+    }
+
+    supperTraversalKeys.forEach(function(key) {
+      if (key in node) {
+        deepTraversal(node[key]);
+      }
+    })
+
+    return nodes;
 }
 
 function runApp(widget) {
-    var jsonTree = JSON.stringify(widget);
-    MXNativeJSFlutterApp.sendJSON({data: jsonTree});
+  buildOwner.initWidget(widget);
 }
 
-function update(arg) {
-    data = data + 2;
-    let app = new Scaffold({
+// -----------[code]-------------
+
+class CustomlessWidget extends StateWidget {
+
+    build() {
+      return new Text('CustomWidget')
+    }
+}
+
+class CustomfulWidget extends StateWidget {
+    constructor() {
+      super();
+    }
+
+    build() {
+      return new Text('CustomWidget')
+    }
+}
+
+class RootWidget extends StateWidget {
+    constructor() {
+      super();
+      this.state = {
+        count: 0
+      };
+    }
+
+    increment() {
+      this.setState(function() {
+        this.state.count++;
+      });
+    }
+
+    decrement() {
+      this.setState(function() {
+        this.state.count--;
+      });
+    }
+
+    double() {
+      this.setState(function() {
+        this.state.count = this.state.count * 2;
+      });
+    }
+
+    build() {
+      let app = new Scaffold({
         appBar: new AppBar({
-            title: new Text("JSFlutter UI Demo")
+            title: new Text("Flutter Demo")
         }),
-        body: new Text(data)
-    });
-    runApp(app);
-    return 1;
+        body: new Column({
+          children: [
+            new GestureDetector({
+              onTap: this.increment.bind(this),
+              child: new Text('increment')
+            }),
+            new Text(`${this.state.count}`),
+            new GestureDetector({
+              onTap: this.decrement.bind(this),
+              child: new Text('decrement')
+            }),
+            new GestureDetector({
+              onTap: this.double.bind(this),
+              child: new Text('double')
+            })
+          ]
+        })
+      });
+
+      return app;
+    }
 }
 
-main()
+function main() {
+  runApp(new RootWidget());
+}
