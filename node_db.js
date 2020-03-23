@@ -1,6 +1,7 @@
-const fs = require("fs");
+require('./polyfill/startsWith');
 
-require('string.prototype.startswith');
+const fs = require("fs");
+const readlineSync = require('readline-sync');
 
 const KW_APPEND = '来了个'
 const KW_ASSERT = '保准'
@@ -206,7 +207,7 @@ const STMT_SAY = 'SAY'
 const STMT_VAR_DECL = 'VAR_DECL'
 
 function _dongbei_print(str) {
-    console.log(str, '\n');
+    console.log(str);
 }
 
 class SourceLoc {
@@ -273,7 +274,12 @@ function IdentifierToken(name, loc) {
 
 function ConcatExpr(exprs) {
     return {
-        exprs: exprs
+        exprs,
+        toJavaScript: function() {
+            return this.exprs.map((expr) => {
+                return expr.toJavaScript()
+            }).join('+')
+        }
     }
 }
 
@@ -287,9 +293,12 @@ ARITHMETIC_OPERATION_TO_PYTHON[KW_MODULO] = '%'
 
 function ArithmeticExpr(op1, operation, op2) {
     return {
-        op1: op1,
-        operation: operation,
-        op2: op2
+        op1,
+        operation,
+        op2,
+        toJavaScript: function() {
+            return `${op1.toJavaScript()} ${ARITHMETIC_OPERATION_TO_PYTHON[this.operation.value]} ${op2.toJavaScript()}`
+        }
     }
 }
 
@@ -323,20 +332,33 @@ function NumberLiteralExpr(value, loc) {
 
 function VariableExpr(variable) {
     return {
-        variable
+        variable,
+        toJavaScript: function() {
+            return getJavaScriptVarName(this.variable)
+        }
     }
 }
 
 function ParenExpr(expr) {
     return {
-        expr
+        expr,
+        toJavaScript: function() {
+            return `(${this.expr.toJavaScript()})`
+        }
     }
 }
 
 function CallExpr(func, args) {
     return {
         func,
-        args
+        args,
+        toJavaScript: function() {
+            return `${getJavaScriptVarName(this.func)}(${
+                this.args.map((arg) => {
+                    return arg.toJavaScript()
+                }).join(',')
+            })`
+        }
     }
 }
 
@@ -349,7 +371,14 @@ function NewObjectExpr(class_id, args) {
 
 function ListExpr(exprs) {
     return {
-        exprs
+        exprs,
+        toJavaScript: function() {
+          return `[${
+              this.exprs.map((expr) => {
+                  return expr.toJavaScript()
+              }).join(',')
+          }]`
+        }
     }
 }
 
@@ -364,34 +393,65 @@ function ComparisonExpr(op1, relation, op2) {
     return {
         op1: op1,
         relation: relation,
-        op2: op2
+        op2: op2,
+        toJavaScript: function() {
+          if (this.relation.value === KW_IS_NONE) {
+              return `${this.op1.toJavaScript()} === undefined`
+          }
+          return `
+            ${this.op1.toJavaScript()}
+            ${COMPARISON_KEYWORD_TO_PYTHON[this.relation.value]}
+            ${this.op2.toJavaScript()}
+          `
+        }
     }
 }
 
 function LengthExpr(expr) {
     return {
-        expr
+        expr,
+        toJavaScript: function() {
+            return `${this.expr.toJavaScript()}.length`
+        }
     }
 }
 
 function NegateExpr(expr) {
     return {
-        expr: expr
+        expr,
+        toJavaScript: function() {
+          return `-(${this.expr.toJavaScript()})`
+        }
     }
 }
 
 function SubListExpr(list, remove_at_head, remove_at_tail) {
     return {
-        list: list,
-        remove_at_head: remove_at_head,
-        remove_at_tail: remove_at_tail
+        list,
+        remove_at_head,
+        remove_at_tail,
+        toJavaScript: function() {
+            if (this.remove_at_head) {
+                return `${this.list.toJavaScript()}.shift()`
+            }
+            if (this.remove_at_tail) {
+                return `${this.list.toJavaScript()}.pop()`
+            }
+            return `${this.list.toJavaScript()}`
+        }
     }
 }
 
 function IndexExpr(list_expr, index_expr) {
     return {
         list_expr: list_expr,
-        index_expr: index_expr
+        index_expr: index_expr,
+        toJavaScript: function() {
+          let list_expr_js = this.list_expr.toJavaScript()
+          let index_expr_js = this.index_expr.toJavaScript()
+          let index_str = `(${index_expr_js} - 1) < 0 ? (${index_expr_js} - 1 + ${list_expr_js}.length) : (${index_expr_js} - 1)`
+          return `${list_expr_js}[${index_str}]`
+        }
     }
 }
 
@@ -799,7 +859,7 @@ class DongbeiParser {
                 let stmts = this.parseStmts()
                 this.consumeKeyword(KW_END_LOOP)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_LOOP, (expr1, from_expr, to_expr, stmts))
+                return Statement(STMT_LOOP, [expr1, from_expr, to_expr, stmts])
             }
 
             // Parse 在...磨叽
@@ -810,7 +870,7 @@ class DongbeiParser {
                 let stmts = this.parseStmts()
                 this.consumeKeyword(KW_END_LOOP)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_RANGE_LOOP, (expr1, range_expr, stmts))
+                return Statement(STMT_RANGE_LOOP, [expr1, range_expr, stmts])
             }
 
             // Parse 从一而终磨叽 or the '1 Infinite Loop' 彩蛋
@@ -822,7 +882,7 @@ class DongbeiParser {
                 let stmts = this.parseStmts()
                 this.consumeKeyword(KW_END_LOOP)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_INFINITE_LOOP, (expr1, stmts))
+                return Statement(STMT_INFINITE_LOOP, [expr1, stmts])
             }
 
             // Parse 装
@@ -830,7 +890,7 @@ class DongbeiParser {
             if (become) {
                 let expr = this.parseExpr()
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_ASSIGN, (expr1, expr))
+                return Statement(STMT_ASSIGN, [expr1, expr])
             }
       
             // Parse 来了个
@@ -838,7 +898,7 @@ class DongbeiParser {
             if (append) {
                 let expr = this.parseExpr()
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_APPEND, (expr1, expr))
+                return Statement(STMT_APPEND, [expr1, expr])
             }
       
             // Parse 来了群
@@ -846,7 +906,7 @@ class DongbeiParser {
             if (extend) {
                 let expr = this.parseExpr()
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_EXTEND, (expr1, expr))
+                return Statement(STMT_EXTEND, [expr1, expr])
             }
 
             // Parse 走走
@@ -863,7 +923,7 @@ class DongbeiParser {
                 let expr = this.parseExpr()
                 this.consumeKeyword(KW_STEP)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_INC_BY, (expr1, expr))
+                return Statement(STMT_INC_BY, [expr1, expr])
             }
       
             // Parse 稍稍
@@ -880,7 +940,7 @@ class DongbeiParser {
                 let expr = this.parseExpr()
                 this.consumeKeyword(KW_STEP)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_DEC_BY, (expr1, expr))
+                return Statement(STMT_DEC_BY, [expr1, expr])
             }
       
             // Treat the expression as a statement.
@@ -1033,14 +1093,14 @@ class DongbeiParser {
             // Parse 掐头
             let remove_head = this.tryConsumeKeyword(KW_REMOVE_HEAD)
             if (remove_head) {
-                expr = SubListExpr(expr, 1, None)
+                expr = SubListExpr(expr, 1, undefined)
                 continue
             }
 
             // Parse 去尾
             let remove_tail = this.tryConsumeKeyword(KW_REMOVE_TAIL)
             if (remove_tail) {
-                expr = SubListExpr(expr, None, 1)
+                expr = SubListExpr(expr, undefined, 1)
                 continue
             }
             
@@ -1062,16 +1122,16 @@ class DongbeiParser {
         while (true) {
             let pre_operator_tokens = this.tokens
             let operator = this.tryConsumeKeyword(KW_TIMES)
-            if (operator) {
+            if (!operator) {
               operator = this.tryConsumeKeyword(KW_DIVIDE_BY)
             }
-            if (operator) {
+            if (!operator) {
               operator = this.tryConsumeKeyword(KW_INTEGER_DIVIDE_BY)
             }
-            if (operator) {
+            if (!operator) {
               operator = this.tryConsumeKeyword(KW_MODULO)
             }
-            if (operator) {
+            if (!operator) {
               break
             }
 
@@ -1087,7 +1147,7 @@ class DongbeiParser {
  
         let expr = factors[0]
         for (let i in operators) {
-            expr = ArithmeticExpr(expr, operators[i], factors[i + 1])
+            expr = ArithmeticExpr(expr, operators[i], factors[Number(i) + 1])
         }
         return expr
     }
@@ -1121,7 +1181,7 @@ class DongbeiParser {
 
         let expr = terms[0]
         for (let i in operators) {
-            expr = ArithmeticExpr(expr, operators[i], terms[i + 1])
+            expr = ArithmeticExpr(expr, operators[i], terms[Number(i) + 1])
         }
         return expr
     }
@@ -1136,7 +1196,7 @@ class DongbeiParser {
         if (base_init) {
             func_name = 'super().__init__'
         } else {
-            func = this.consumeTokenType(TK_IDENTIFIER)
+            let func = this.consumeTokenType(TK_IDENTIFIER)
             func_name = func.value
         }
 
@@ -1220,7 +1280,7 @@ class DongbeiParser {
 
         let cmp = this.tryConsumeKeyword(KW_COMPARE)
         if (cmp) {
-            let arith2 = this.ParseArithmeticExpr()
+            let arith2 = this.parseArithmeticExpr()
             let relation = this.tryConsumeKeyword(KW_GREATER)
             if (!relation) {
                 relation = this.consumeKeyword(KW_LESS)
@@ -1249,7 +1309,7 @@ class DongbeiParser {
         let cmp_loc = this.loc
         cmp = this.tryConsumeKeyword(KW_IS_NONE)
         if (cmp) {
-            return ComparisonExpr(arith, Keyword(KW_IS_NONE, cmp_loc), None)
+            return ComparisonExpr(arith, Keyword(KW_IS_NONE, cmp_loc))
         }
     
         return arith
@@ -1261,7 +1321,7 @@ class DongbeiParser {
     tryParseFuncDef(is_method = false) {
         let orig_tokens = this.tokens
         let id = this.tryConsumeTokenType(TK_IDENTIFIER)
-        if (id) {
+        if (!id) {
             return
         }
 
@@ -1278,7 +1338,7 @@ class DongbeiParser {
                 this.consumeKeyword(KW_COMMA)
             }
 
-            let func_def = this.consumeToken(Keyword(KW_DEF, None))
+            let func_def = this.consumeToken(Keyword(KW_DEF))
             let stmts = this.parseStmts()
             this.consumeKeyword(KW_END)
             this.consumeKeyword(KW_PERIOD)
@@ -1352,7 +1412,8 @@ class DongbeiParser {
             process.exit();
         }
         if (!token.equal(this.tokens[0])) {
-            console.log('%s: 期望符号 %s，实际却是 %s。', this.tokens[0].loc, token, this.tokens[0]);
+            console.log(`line: ${this.tokens[0].loc.line}, column: ${this.tokens[0].loc.column}`)
+            console.log(`期望符号 “${token.value}”, 实际却是 “${this.tokens[0].value}”`)
             process.exit();
         }
         let found_token = this.tokens[0]
@@ -1394,13 +1455,88 @@ const ID_TRUE = '没毛病'
 const ID_FALSE = '有毛病'
 const ID_SLEEP = '打个盹'
 
-function translateStatementToPython(stmt, indent = '') {
+// Maps a dongbei identifier to its corresponding Python identifier.
+const _dongbei_var_to_js_var = {};
+_dongbei_var_to_js_var[ID_ARGV] = 'process.argv';
+_dongbei_var_to_js_var[ID_INIT] = '__init__';
+_dongbei_var_to_js_var[ID_SELF] = 'self';
+_dongbei_var_to_js_var[ID_YOU_SAY] = 'readlineSync.question';
+_dongbei_var_to_js_var[ID_TRUE] = 'true';
+_dongbei_var_to_js_var[ID_FALSE] = 'false';
+_dongbei_var_to_js_var[ID_SLEEP] = 'time.sleep';
+
+function getJavaScriptVarName(variable) {
+  if (variable in _dongbei_var_to_js_var) {
+    return _dongbei_var_to_js_var[variable]
+  }
+  return variable;
+}
+
+function translateStatementToJavaScript(stmt, indent = '') {
+    if (stmt.kind == STMT_VAR_DECL) {
+        let var_token = stmt.value
+        let variable = getJavaScriptVarName(var_token.value)
+        return indent + `var ${variable} = undefined`
+    }
+
+    if (stmt.kind == STMT_LIST_VAR_DECL) {
+        let var_token = stmt.value
+        let variable = getJavaScriptVarName(var_token.value)
+        return indent + `var ${variable} = []`
+    }
+
+    if (stmt.kind == STMT_ASSIGN) {
+        let [var_expr, expr] = stmt.value
+        return indent + `var ${var_expr.toJavaScript()} = ${expr.toJavaScript()}`
+    }
+
+    if (stmt.kind == STMT_APPEND) {
+        let [var_expr, expr] = stmt.value
+        return indent + `${var_expr.toJavaScript()}.push(${expr.toJavaScript()})`
+    }
+
+    if (stmt.kind == STMT_EXTEND) {
+        let [var_expr, expr] = stmt.value
+        return indent + `${var_expr.toJavaScript()}.push.apply(${var_expr.toJavaScript()}, ${expr.toJavaScript()})`
+    }
+
     if (stmt.kind == STMT_SAY) {
         let expr = stmt.value
         return indent + `_dongbei_print(${expr.toJavaScript()})`
     }
 
-    return indent
+    if (stmt.kind == STMT_INC_BY) {
+        let [var_expr, expr] = stmt.value
+        return indent + `${var_expr.toJavaScript()} += ${expr.toJavaScript()}`
+    }
+
+    if (stmt.kind == STMT_DEC_BY) {
+        let [var_expr, expr] = stmt.value
+        return indent + `${var_expr.toJavaScript()} -= ${expr.toJavaScript()}`
+    }
+
+
+
+    if (stmt.kind == STMT_SET_NONE) {
+        return indent + `${stmt.value.toJavaScript()} = undefined`
+    }
+
+    if (stmt.kind == STMT_DEL) {
+        return indent + `delete ${stmt.value.toJavaScript()}`
+    }
+
+    if (stmt.kind == STMT_IMPORT) {
+        return indent + `require("${stmt.value.value}")`
+    }
+
+
+
+    if (stmt.kind == STMT_EXPR) {
+        return indent + stmt.value.toJavaScript()
+    }
+
+    console.log(`俺不懂 ${stmt.kind} 语句咋执行。`)
+    process.exit();
 }
 
 function translateDongbeiToJs(code, srcFilePath) {
@@ -1410,10 +1546,9 @@ function translateDongbeiToJs(code, srcFilePath) {
     let statements = parser.translateTokensToAst(tokens);
 
     for (let s of statements) {
-        js_code.push(translateStatementToPython(s));
+        js_code.push(translateStatementToJavaScript(s));
     }
 
-    console.log(js_code);
     return js_code.join('\n');
 }
 
@@ -1422,7 +1557,7 @@ function run(code, srcFilePath) {
     try {
         eval(jsCode);
     } catch (error) {
-        console.log(error)
+        _dongbei_print(`整叉劈了：${error.toString().split(':')[1]}`)
     }
 }
 
