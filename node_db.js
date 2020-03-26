@@ -210,6 +210,20 @@ function _dongbei_print(str) {
     console.log(str);
 }
 
+function *_dongbei_1_infinite_loop() {
+    while (true) {
+        yield 1;
+    }
+}
+
+function range(start, end, step = 1) {
+	let arr = [];
+	for(let i=start; i < end; i++){
+		if(i%step==0){arr.push(i)}
+	}
+	return arr;
+}
+
 class SourceLoc {
     constructor(filepath = '<unknown>', line = 1, column = 0) {
         this.filepath = filepath
@@ -313,7 +327,7 @@ function LiteralExpr(token) {
                 return `"${this.token.value}"`
             }
             if (this.token.kind == TK_NONE_LITERAL) {
-                return 'None'
+                return 'undefined'
             }
             throw `Unexpected token kind ${this.token.kind}`
         }
@@ -365,7 +379,10 @@ function CallExpr(func, args) {
 function NewObjectExpr(class_id, args) {
     return {
         class_id,
-        args
+        args,
+        toJavaScript: function() {
+            return `new ${getJavaScriptVarName(this.class_id.value)}(${this.args.map(arg => arg.toJavaScript()).join(',')})`
+        }
     }
 }
 
@@ -398,11 +415,7 @@ function ComparisonExpr(op1, relation, op2) {
           if (this.relation.value === KW_IS_NONE) {
               return `${this.op1.toJavaScript()} === undefined`
           }
-          return `
-            ${this.op1.toJavaScript()}
-            ${COMPARISON_KEYWORD_TO_PYTHON[this.relation.value]}
-            ${this.op2.toJavaScript()}
-          `
+          return `${this.op1.toJavaScript()} ${COMPARISON_KEYWORD_TO_PYTHON[this.relation.value]} ${this.op2.toJavaScript()}`
         }
     }
 }
@@ -457,15 +470,25 @@ function IndexExpr(list_expr, index_expr) {
 
 function ObjectPropertyExpr(object, property) {
     return {
-        object: object,
-        property: property
+        object,
+        property,
+        toJavaScript: function() {
+            let obj = this.object.toJavaScript()
+            let prop = getJavaScriptVarName(this.property.value)
+            return `${obj}.${prop}`
+        }
     }
 }
 
 function MethodCallExpr(object, call_expr) {
     return {
         object,
-        call_expr
+        call_expr,
+        toJavaScript: function() {
+            let obj = this.object.toJavaScript()
+            let call = this.call_expr.toJavaScript()
+            return `${obj}.${call}`
+        }
     }
 }
 
@@ -798,6 +821,7 @@ class DongbeiParser {
             let then_stmt = this.parseStmt()
             // Parse the optional else-branch.
             let kw_else = this.tryConsumeKeyword(KW_ELSE)
+            let else_stmt
             if (kw_else) {
                 else_stmt = this.parseStmt()
             } else {
@@ -840,7 +864,7 @@ class DongbeiParser {
                 let methods = this.parseMethodDefs()
                 this.consumeKeyword(KW_END)
                 this.consumeKeyword(KW_PERIOD)
-                return Statement(STMT_CLASS_DEF, (subclass, id, methods))
+                return Statement(STMT_CLASS_DEF, [subclass, id, methods])
             }
         }
 
@@ -1071,7 +1095,7 @@ class DongbeiParser {
             // Parse 的
             let dot = this.tryConsumeKeyword(KW_DOT)
             if (dot) {
-                property_ = this.tonsumeTokenType(TK_IDENTIFIER)
+                let property_ = this.consumeTokenType(TK_IDENTIFIER)
                 expr = ObjectPropertyExpr(expr, property_)
                 continue
             }
@@ -1194,7 +1218,7 @@ class DongbeiParser {
         let base_init = this.tryConsumeKeyword(KW_BASE_INIT)
         let func_name;
         if (base_init) {
-            func_name = 'super().__init__'
+            func_name = 'super'
         } else {
             let func = this.consumeTokenType(TK_IDENTIFIER)
             func_name = func.value
@@ -1330,7 +1354,7 @@ class DongbeiParser {
         if (open_paren) {
             while (true) {
                 let param = this.consumeTokenType(TK_IDENTIFIER)
-                params.append(param)
+                params.push(param)
                 let close_paren = this.tryConsumeKeyword(KW_CLOSE_PAREN)
                 if (close_paren) {
                     break
@@ -1348,10 +1372,10 @@ class DongbeiParser {
         // not open_paren
         let func_def = this.tryConsumeKeyword(KW_DEF)
         if (func_def) {
-            stmts = this.parseStmts()
+            let stmts = this.parseStmts()
             this.consumeKeyword(KW_END)
             this.consumeKeyword(KW_PERIOD)
-            return Statement(STMT_FUNC_DEF, (id, params, stmts))
+            return Statement(STMT_FUNC_DEF, [id, params, stmts])
         }
     
         this.tokens = orig_tokens
@@ -1360,7 +1384,7 @@ class DongbeiParser {
     parseMethodDefs() {
         let methods = []
         while (true) {
-            let method = self.tryParseFuncDef(true)
+            let method = this.tryParseFuncDef(true)
             if (method) {
                 methods.push(method)
             } else {
@@ -1458,8 +1482,8 @@ const ID_SLEEP = '打个盹'
 // Maps a dongbei identifier to its corresponding Python identifier.
 const _dongbei_var_to_js_var = {};
 _dongbei_var_to_js_var[ID_ARGV] = 'process.argv';
-_dongbei_var_to_js_var[ID_INIT] = '__init__';
-_dongbei_var_to_js_var[ID_SELF] = 'self';
+_dongbei_var_to_js_var[ID_INIT] = 'constructor';
+_dongbei_var_to_js_var[ID_SELF] = 'this';
 _dongbei_var_to_js_var[ID_YOU_SAY] = 'readlineSync.question';
 _dongbei_var_to_js_var[ID_TRUE] = 'true';
 _dongbei_var_to_js_var[ID_FALSE] = 'false';
@@ -1476,18 +1500,22 @@ function translateStatementToJavaScript(stmt, indent = '') {
     if (stmt.kind == STMT_VAR_DECL) {
         let var_token = stmt.value
         let variable = getJavaScriptVarName(var_token.value)
-        return indent + `var ${variable} = undefined`
+        return indent + `var ${variable} = undefined;`
     }
 
     if (stmt.kind == STMT_LIST_VAR_DECL) {
         let var_token = stmt.value
         let variable = getJavaScriptVarName(var_token.value)
-        return indent + `var ${variable} = []`
+        return indent + `var ${variable} = [];`
     }
 
     if (stmt.kind == STMT_ASSIGN) {
         let [var_expr, expr] = stmt.value
-        return indent + `var ${var_expr.toJavaScript()} = ${expr.toJavaScript()}`
+        let var_js = var_expr.toJavaScript()
+        if (var_js.indexOf('.')) {
+            return indent + `${var_js} = ${expr.toJavaScript()};`
+        }
+        return indent + `var ${var_js} = ${expr.toJavaScript()};`
     }
 
     if (stmt.kind == STMT_APPEND) {
@@ -1502,7 +1530,7 @@ function translateStatementToJavaScript(stmt, indent = '') {
 
     if (stmt.kind == STMT_SAY) {
         let expr = stmt.value
-        return indent + `_dongbei_print(${expr.toJavaScript()})`
+        return indent + `_dongbei_print(${expr.toJavaScript()});`
     }
 
     if (stmt.kind == STMT_INC_BY) {
@@ -1515,7 +1543,89 @@ function translateStatementToJavaScript(stmt, indent = '') {
         return indent + `${var_expr.toJavaScript()} -= ${expr.toJavaScript()}`
     }
 
+    if (stmt.kind == STMT_LOOP) {
+        let [var_expr, from_val, to_val, stmts] = stmt.value
+        let loop = indent + `for (let ${var_expr.toJavaScript()} of range(${from_val.toJavaScript()}, ${to_val.toJavaScript()})) `
+        loop += '{'
+        for (let s in stmts) {
+            loop += `${translateStatementToJavaScript(stmts[s], indent)}`
+        }
+        loop += '}'
+        return loop
+    }
 
+    if (stmt.kind == STMT_RANGE_LOOP) {
+        let [var_expr, range_expr, stmts] = stmt.value
+        let loop = indent + `for (let ${var_expr.toJavaScript()} of ${range_expr.toJavaScript()}) `
+        loop += '{'
+        for (let s in stmts) {
+            loop += `${translateStatementToJavaScript(stmts[s], indent)}`
+        }
+        loop += '}'
+        return loop
+    }
+
+    if (stmt.kind == STMT_INFINITE_LOOP) {
+        let [var_expr, stmts] = stmt.value
+        let loop = indent + `for (let ${var_expr.toJavaScript()} of _dongbei_1_infinite_loop())`
+        loop += '{'
+        for (let s in stmts) {
+            loop += `${translateStatementToJavaScript(stmts[s], indent)}`
+        }
+        loop += '}'
+        return loop
+    }
+
+    if (stmt.kind == STMT_FUNC_DEF) {
+        let [func_token, params, stmts] = stmt.value
+        let func_name = getJavaScriptVarName(func_token.value)
+        let param_names = params.map((tk) => {
+            return getJavaScriptVarName(tk.value)
+        })
+        if (param_names[0] === 'this') {
+            param_names.shift()
+        }
+        code = indent + `${func_name !== 'constructor' ? 'function ' : ''}${func_name}(${param_names.join(', ')}) `
+        code += '{'
+        for (let s in stmts) {
+            code += `${translateStatementToJavaScript(stmts[s], indent)}`
+        }
+        code += '}'
+        return code
+    }
+
+    if (stmt.kind == STMT_CALL) {
+        let func = stmt.value.func
+        let args = stmt.value.args
+        let func_name = getJavaScriptVarName(func)
+        let code = indent + `${func_name}(${args.map(arg => arg.toJavaScript()).join(',')});`
+        return code
+    }
+
+    if (stmt.kind == STMT_RETURN) {
+        return indent + 'return ' + stmt.value.toJavaScript()
+    }
+
+    if (stmt.kind == STMT_COMPOUND) {
+        let code = indent
+        let stmts = stmt.value
+        if (stmts) {
+            for (let s in stmts) {
+                code += translateStatementToJavaScript(stmts[s], indent)
+            }
+        }
+        return code
+    }
+
+    if (stmt.kind == STMT_CONDITIONAL) {
+        let [condition, then_stmt, else_stmt] = stmt.value
+        let code = indent + `if (${condition.toJavaScript()}) `
+        code += `{${translateStatementToJavaScript(then_stmt, indent)}} `
+        if (else_stmt) {
+            code += `else {${translateStatementToJavaScript(else_stmt, indent)}}`
+        }
+        return code
+    }
 
     if (stmt.kind == STMT_SET_NONE) {
         return indent + `${stmt.value.toJavaScript()} = undefined`
@@ -1529,7 +1639,36 @@ function translateStatementToJavaScript(stmt, indent = '') {
         return indent + `require("${stmt.value.value}")`
     }
 
+    if (stmt.kind == STMT_BREAK) {
+        return indent + 'break;'
+    }
 
+    if (stmt.kind == STMT_CONTINUE) {
+        return indent + 'continue;'
+    }
+
+    // STMT_ASSERT
+
+    // STMT_ASSERT_FALSE
+
+    // STMT_RAISE
+
+    // STMT_CLASS_DEF
+
+    if (stmt.kind == STMT_CLASS_DEF) {
+        let [subclass, baseclass, methods] = stmt.value
+        let baseclass_decl = ''
+        if (baseclass.value != '无产') {
+            baseclass_decl = ` extends ${getJavaScriptVarName(baseclass.value)}`
+        }
+        code = indent + `class ${getJavaScriptVarName(subclass.value)}${baseclass_decl} `
+        code += '{'
+        for (let method in methods) {
+            code += translateStatementToJavaScript(methods[method], indent)
+        }
+        code += '}'
+        return code
+    }
 
     if (stmt.kind == STMT_EXPR) {
         return indent + stmt.value.toJavaScript()
@@ -1548,7 +1687,6 @@ function translateDongbeiToJs(code, srcFilePath) {
     for (let s of statements) {
         js_code.push(translateStatementToJavaScript(s));
     }
-
     return js_code.join('\n');
 }
 
