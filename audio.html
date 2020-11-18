@@ -144,11 +144,11 @@
       'B7': 3951.07,
       'C8': 4186.01
     };
-    class Bit8Music {
-      constructor({ meter = '4/4', bpm = 120, volume = 1 }) {
+    class ChipMusic {
+      constructor({ bpm = 120, volume = 1 }) {
         this.bpm = bpm;
         this.t = 60 / bpm;
-        this.per = this.t / meter.split('/')[0];
+        this.per = this.t / 2;
         this.volume = volume;
         this.realIntervalTime = 0.001;
         this.effectorList = [];
@@ -239,6 +239,14 @@
         }
         getByteFrequencyData();
       }
+      getByteTimeDomainData(callback) {
+        const getByteTimeDomainData = (time) => {
+          requestAnimationFrame(getByteTimeDomainData);
+          this.analyser.getByteTimeDomainData(this.dataArray);
+          callback && callback(this.dataArray)
+        }
+        getByteTimeDomainData();
+      }
       play() {
         this.effectorList.forEach(({ effector, startTime, stopTime }) => {
           effector.start(startTime);
@@ -249,16 +257,15 @@
   </script>
 </head>
 <body>
-  <canvas id="canvas" width="400" height="400" style="border: 1px solid #000000;"></canvas>
+  <canvas id="canvas" width="400" height="100" style="border: 1px solid #000000;"></canvas>
   <button id="play">play</button>
   <script>
-    var bit8music = new Bit8Music({
-      meter: '2/2',
+    var chipMusic = new ChipMusic({
       bpm: 200,
       volume: 0.2
     });
 
-    bit8music.createWaveForm('square', [
+    chipMusic.createWaveForm('square', [
       ['E5 F#4', 'E5 F#4', '-', 'E5 F#4'],
       ['-', 'C5 F#4', 'E5 F#4', '-'],
       ['G5 B4 G4', '-', '-', '-'],
@@ -269,7 +276,7 @@
       ['-', 'A4 C4', '-', 'B4 D4'],
       ['-', 'Bb4 Db4', 'A4 C4', '-'],
     ])
-    bit8music.createWaveForm('triangle', [
+    chipMusic.createWaveForm('triangle', [
       ['D3', 'D3', '-', 'D3'],
       ['-', 'D3', 'D3', '-'],
       ['-', '-', '-', '-'],
@@ -281,7 +288,7 @@
       ['-', 'Gb3', 'F3', '-'],
     ])
 
-    bit8music.createWaveForm('noise', [
+    chipMusic.createWaveForm('noise', [
       ['-', '-', '-', '-'],
       ['-', '-', '-', '-'],
       ['-', '-', '-', '-'],
@@ -298,25 +305,51 @@
       const WIDTH = canvas.width;
       const HEIGHT = canvas.height;
 
-      bit8music.onByteFrequencyData(function(dataArray) {
+      chipMusic.onByteFrequencyData(function(dataArray) {
         const bufferLength = dataArray.length;
-        let barWidth = WIDTH / bufferLength * 1.5;
+        let barWidth = WIDTH / bufferLength * 2.5;
         let barHeight;
+        let x = 0;
         ctx.clearRect(0, 0, WIDTH, HEIGHT);
-        for (let i = 0, x = 0; i < bufferLength; i++) {
-          barHeight = dataArray[i];
-          let r = barHeight + 25 * (i / bufferLength);
-          let g = 250 * (i / bufferLength);
-          let b = 50;
-          ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
-          ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
-          x += barWidth + 2;
+        for (let i = 0; i < bufferLength; i++) {
+          barHeight = dataArray[i] / 2;
+          ctx.fillStyle = 'rgb(' + (barHeight + 100) + ',50,50)';
+          ctx.fillRect(x, HEIGHT - barHeight / 2, barWidth, barHeight);
+          x += barWidth + 1;
         }
       });
     }
 
+    function renderCanvas2() {
+      const ctx = canvas.getContext("2d");
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+
+      chipMusic.getByteTimeDomainData(function(dataArray) {
+        const bufferLength = dataArray.length;
+        var sliceWidth = WIDTH * 1.0 / bufferLength;
+        var x = 0;
+        ctx.clearRect(0, 0, WIDTH, HEIGHT);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgb(0, 0, 0)';
+        ctx.beginPath();
+        for (var i = 0; i < bufferLength; i++) {
+          var v = dataArray[i] / 128.0;
+          var y = v * HEIGHT / 2;
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+          x += sliceWidth;
+        }
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+      });
+    }
+
     document.getElementById('play').addEventListener('click', function() {
-      bit8music.play();
+      chipMusic.play();
       renderCanvas();
     })
   </script>
