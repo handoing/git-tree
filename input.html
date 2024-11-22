@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>High-Resolution Canvas Input</title>
+  <style>
+    body {
+        margin: 0;
+        padding: 0;
+    }
+    canvas {
+      border: 1px solid black;
+    }
+    .hidden-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <input id="hiddenInput" class="hidden-input" type="text" />
+    <input type="text" style="transform: scale(2); transform-origin: 0 0;"/>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const hiddenInput = document.getElementById('hiddenInput');
+
+    const inputBox = {
+      x: 50,
+      y: 50,
+      width: 400,
+      height: 40,
+      text: '',
+      font: '26px Arial',
+      color: 'black',
+      borderColor: 'rgba(118,118,118,1)',
+      backgroundColor: 'white',
+      isFocused: false,
+      cursorPosition: 0,
+      selectionStart: null,
+      selectionEnd: null
+    };
+
+    let cursorVisible = true;
+    let cursorTimer = null;
+    let isSelecting = false;
+
+    // 设置高分辨率 Canvas
+    function setCanvasResolution() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+      ctx.scale(dpr, dpr);
+    }
+
+    // 初始化 Canvas 分辨率
+    function initCanvas() {
+      canvas.style.width = '500px'; // CSS 尺寸
+      canvas.style.height = '200px'; // CSS 尺寸
+      setCanvasResolution();
+    }
+
+    function drawRoundedRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y); // 从左上角的圆角开始
+        ctx.lineTo(x + width - radius, y); // 到右上角
+        ctx.arcTo(x + width, y, x + width, y + radius, radius); // 绘制右上角的圆弧
+        ctx.lineTo(x + width, y + height - radius); // 到右下角
+        ctx.arcTo(x + width, y + height, x + width - radius, y + height, radius); // 绘制右下角的圆弧
+        ctx.lineTo(x + radius, y + height); // 到左下角
+        ctx.arcTo(x, y + height, x, y + height - radius, radius); // 绘制左下角的圆弧
+        ctx.lineTo(x, y + radius); // 到左上角
+        ctx.arcTo(x, y, x + radius, y, radius); // 绘制左上角的圆弧
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    // 绘制输入框
+    function drawInputBox() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 绘制背景
+      ctx.fillStyle = inputBox.backgroundColor;
+      ctx.fillRect(inputBox.x, inputBox.y, inputBox.width, inputBox.height);
+
+      // 绘制边框
+      ctx.lineWidth = inputBox.isFocused ? 4 : 2;
+      ctx.strokeStyle = inputBox.isFocused ? 'rgba(14,98,201,1)' : inputBox.borderColor;
+    //   ctx.strokeRect(inputBox.x, inputBox.y, inputBox.width, inputBox.height);
+      drawRoundedRect(ctx, inputBox.x, inputBox.y, inputBox.width, inputBox.height, 4);
+
+      // 绘制选中文本背景
+      if (inputBox.selectionStart !== null && inputBox.selectionEnd !== null) {
+        const startX = inputBox.x + 5 + ctx.measureText(inputBox.text.slice(0, inputBox.selectionStart)).width;
+        const endX = inputBox.x + 5 + ctx.measureText(inputBox.text.slice(0, inputBox.selectionEnd)).width;
+        ctx.fillStyle = 'rgba(0, 120, 215, 0.3)';
+        ctx.fillRect(startX, inputBox.y + 5, endX - startX, inputBox.height - 10);
+      }
+
+      // 绘制文字
+      ctx.font = inputBox.font;
+      ctx.fillStyle = inputBox.color;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        inputBox.text,
+        inputBox.x + 6,
+        inputBox.y + 2 + inputBox.height / 2
+      );
+
+      // 绘制光标
+      if (inputBox.isFocused && cursorVisible && inputBox.selectionStart === null) {
+        const textBeforeCursor = inputBox.text.slice(0, inputBox.cursorPosition);
+        const textWidth = ctx.measureText(textBeforeCursor).width;
+        const cursorX = inputBox.x + 6 + textWidth;
+        const cursorY = inputBox.y + 5;
+        ctx.fillRect(cursorX, cursorY, 2, inputBox.height - 10);
+      }
+    }
+
+    // 光标闪烁
+    function startCursorBlink() {
+      if (cursorTimer) clearInterval(cursorTimer);
+      cursorTimer = setInterval(() => {
+        cursorVisible = !cursorVisible;
+        drawInputBox();
+      }, 500);
+    }
+
+    function stopCursorBlink() {
+      if (cursorTimer) clearInterval(cursorTimer);
+      cursorTimer = null;
+    }
+
+    // 计算鼠标位置对应的字符索引
+    function getCursorPositionFromMouse(x) {
+      const text = inputBox.text;
+      for (let i = 0; i <= text.length; i++) {
+        const textWidth = ctx.measureText(text.slice(0, i)).width;
+        if (x <= inputBox.x + 5 + textWidth + (ctx.measureText(text[i]).width / 2)) {
+          return i;
+        }
+      }
+      return text.length;
+    }
+
+    // 鼠标事件处理
+    canvas.addEventListener('mousedown', (e) => {
+      if (!inputBox.isFocused) return;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+
+      inputBox.selectionStart = getCursorPositionFromMouse(mouseX);
+      inputBox.selectionEnd = null;
+      isSelecting = true;
+      drawInputBox();
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isSelecting || !inputBox.isFocused) return;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+
+      inputBox.selectionEnd = getCursorPositionFromMouse(mouseX);
+      drawInputBox();
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      isSelecting = false;
+      drawInputBox();
+    });
+
+    // 点击事件处理
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (
+        mouseX >= inputBox.x &&
+        mouseX <= inputBox.x + inputBox.width &&
+        mouseY >= inputBox.y &&
+        mouseY <= inputBox.y + inputBox.height
+      ) {
+        inputBox.isFocused = true;
+        inputBox.cursorPosition = getCursorPositionFromMouse(mouseX);
+        inputBox.selectionStart = null;
+        inputBox.selectionEnd = null;
+        hiddenInput.style.left = `${inputBox.x}px`;
+        hiddenInput.style.top = `${inputBox.y}px`;
+        hiddenInput.style.width = `${inputBox.width}px`;
+        hiddenInput.style.height = `${inputBox.height}px`;
+        hiddenInput.value = inputBox.text;
+        hiddenInput.focus();
+        startCursorBlink();
+      } else {
+        inputBox.isFocused = false;
+        hiddenInput.blur();
+        stopCursorBlink();
+      }
+      drawInputBox();
+    });
+
+    // 键盘事件处理
+    hiddenInput.addEventListener('input', () => {
+      inputBox.text = hiddenInput.value;
+      inputBox.cursorPosition = hiddenInput.selectionStart;
+      drawInputBox();
+    });
+
+    hiddenInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') {
+        if (inputBox.cursorPosition > 0) inputBox.cursorPosition--;
+      } else if (e.key === 'ArrowRight') {
+        if (inputBox.cursorPosition < inputBox.text.length) inputBox.cursorPosition++;
+      }
+      drawInputBox();
+    });
+
+    // 初始化
+    initCanvas();
+    drawInputBox();
+
+    // 窗口大小调整时重新设置分辨率
+    window.addEventListener('resize', () => {
+      setCanvasResolution();
+      drawInputBox();
+    });
+  </script>
+</body>
+</html>
