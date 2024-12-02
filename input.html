@@ -16,6 +16,7 @@
       position: absolute;
       opacity: 0;
       pointer-events: none;
+      font-size: 26px;
     }
   </style>
 </head>
@@ -27,6 +28,7 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const hiddenInput = document.getElementById('hiddenInput');
+    const showAnimate = false;
 
     const inputBox = {
       x: 50,
@@ -41,12 +43,16 @@
       isFocused: false,
       cursorPosition: 0,
       selectionStart: null,
-      selectionEnd: null
+      selectionEnd: null,
+      textOffset: 0,
+      padding: 5,
     };
 
     let cursorVisible = true;
     let cursorTimer = null;
     let isSelecting = false;
+    let mouseSelecting = false;
+    const particles = [];
 
     // 设置高分辨率 Canvas
     function setCanvasResolution() {
@@ -107,17 +113,25 @@
       ctx.font = inputBox.font;
       ctx.fillStyle = inputBox.color;
       ctx.textBaseline = 'middle';
+
+      const visibleText = calculateVisibleText();
+      const textToDraw = inputBox.text.slice(visibleText.start, visibleText.end);
+      console.log(visibleText)
+
       ctx.fillText(
-        inputBox.text,
+        // inputBox.text,
+        textToDraw,
         inputBox.x + 6,
         inputBox.y + 2 + inputBox.height / 2
       );
 
+
+
       // 绘制光标
-      if (inputBox.isFocused && cursorVisible && inputBox.selectionStart === null) {
-        const textBeforeCursor = inputBox.text.slice(0, inputBox.cursorPosition);
+      if (inputBox.isFocused && cursorVisible) {
+        const textBeforeCursor = inputBox.text.slice(visibleText.start, inputBox.cursorPosition);
         const textWidth = ctx.measureText(textBeforeCursor).width;
-        const cursorX = inputBox.x + 6 + textWidth;
+        const cursorX = inputBox.x + 6 + textWidth - inputBox.textOffset;
         const cursorY = inputBox.y + 5;
         ctx.fillRect(cursorX, cursorY, 2, inputBox.height - 10);
       }
@@ -135,6 +149,42 @@
     function stopCursorBlink() {
       if (cursorTimer) clearInterval(cursorTimer);
       cursorTimer = null;
+    }
+
+    // 计算可见文字
+    function calculateVisibleText() {
+      const textWidth = ctx.measureText(inputBox.text).width;
+      const visibleWidth = inputBox.width - inputBox.padding * 2;
+
+      let start = 0;
+      let end = inputBox.text.length;
+
+      if (textWidth > visibleWidth) {
+        const cursorOffset = ctx.measureText(inputBox.text.slice(0, inputBox.cursorPosition)).width;
+        if (cursorOffset - inputBox.textOffset > visibleWidth) {
+          inputBox.textOffset = cursorOffset - visibleWidth;
+        } else if (cursorOffset < inputBox.textOffset) {
+          inputBox.textOffset = cursorOffset;
+        }
+
+        for (let i = 0; i < inputBox.text.length; i++) {
+          const charWidth = ctx.measureText(inputBox.text.slice(0, i)).width;
+          if (charWidth - inputBox.textOffset >= 0) {
+            start = i;
+            break;
+          }
+        }
+
+        for (let i = start; i < inputBox.text.length; i++) {
+          const charWidth = ctx.measureText(inputBox.text.slice(start, i)).width;
+          if (charWidth >= visibleWidth) {
+            end = i;
+            break;
+          }
+        }
+      }
+
+      return { start, end };
     }
 
     // 计算鼠标位置对应的字符索引
@@ -156,23 +206,44 @@
       const mouseX = e.clientX - rect.left;
 
       inputBox.selectionStart = getCursorPositionFromMouse(mouseX);
+      hiddenInput.selectionStart = inputBox.selectionStart;
       inputBox.selectionEnd = null;
+      hiddenInput.selectionEnd = null;
       isSelecting = true;
+      mouseSelecting = true;
       drawInputBox();
     });
 
     canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        if (
+            mouseX >= inputBox.x &&
+            mouseX <= inputBox.x + inputBox.width &&
+            mouseY >= inputBox.y &&
+            mouseY <= inputBox.y + inputBox.height
+        ) {
+            canvas.style.cursor = 'text'; // 输入框样式
+        } else {
+            canvas.style.cursor = 'default'; // 默认样式
+        }
+
       if (!isSelecting || !inputBox.isFocused) return;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
+    //   const rect = canvas.getBoundingClientRect();
+    //   const mouseX = e.clientX - rect.left;
 
       inputBox.selectionEnd = getCursorPositionFromMouse(mouseX);
+      hiddenInput.selectionEnd = inputBox.selectionEnd;
       drawInputBox();
     });
 
     canvas.addEventListener('mouseup', () => {
-      isSelecting = false;
-      drawInputBox();
+    //   isSelecting = false;
+        isSelecting = true;
+        mouseSelecting = false;
+        drawInputBox();
     });
 
     // 点击事件处理
@@ -189,8 +260,13 @@
       ) {
         inputBox.isFocused = true;
         inputBox.cursorPosition = getCursorPositionFromMouse(mouseX);
-        inputBox.selectionStart = null;
-        inputBox.selectionEnd = null;
+        hiddenInput.selectionStart = hiddenInput.selectionEnd = inputBox.cursorPosition;
+        if (!isSelecting) {
+            inputBox.selectionStart = null;
+            inputBox.selectionEnd = null;
+        }
+        // inputBox.selectionStart = null;
+        // inputBox.selectionEnd = null;
         hiddenInput.style.left = `${inputBox.x}px`;
         hiddenInput.style.top = `${inputBox.y}px`;
         hiddenInput.style.width = `${inputBox.width}px`;
@@ -203,11 +279,20 @@
         hiddenInput.blur();
         stopCursorBlink();
       }
+      isSelecting = false;
       drawInputBox();
     });
 
     // 键盘事件处理
     hiddenInput.addEventListener('input', () => {
+      const visibleText = calculateVisibleText();
+      const textBeforeCursor = inputBox.text.slice(visibleText.start, inputBox.cursorPosition);
+      const textWidth = ctx.measureText(textBeforeCursor).width;
+      const cursorX = inputBox.x + inputBox.padding + textWidth - inputBox.textOffset;
+      const cursorY = inputBox.y + inputBox.height / 2;
+      generateParticles(cursorX, cursorY);
+
+
       inputBox.text = hiddenInput.value;
       inputBox.cursorPosition = hiddenInput.selectionStart;
       drawInputBox();
@@ -222,9 +307,66 @@
       drawInputBox();
     });
 
+
+    // 粒子类
+    class Particle {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 1;
+        this.size = Math.random() * 3 + 1;
+        this.color = `rgba(255, ${Math.floor(Math.random() * 255)}, 0, ${this.life})`;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 0.02;
+        if (this.life < 0) this.life = 0;
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+      }
+    }
+
+    // 绘制粒子效果
+    function drawParticles() {
+      particles.forEach((particle, index) => {
+        if (particle.life <= 0) {
+          particles.splice(index, 1);
+        } else {
+          particle.update();
+          particle.draw();
+        }
+      });
+    }
+
+    // 粒子动画
+    function animate() {
+        if (showAnimate) {
+            drawInputBox();
+            drawParticles();
+            requestAnimationFrame(animate);
+        }
+    }
+
+    // 生成粒子效果
+    function generateParticles(x, y) {
+      for (let i = 0; i < 10; i++) {
+        particles.push(new Particle(x, y));
+      }
+    }
+
     // 初始化
     initCanvas();
     drawInputBox();
+    animate();
 
     // 窗口大小调整时重新设置分辨率
     window.addEventListener('resize', () => {
